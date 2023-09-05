@@ -1,3 +1,4 @@
+import { RedoOutlined } from '@ant-design/icons';
 import { CyberAccount, CyberBundler, CyberPaymaster } from '@cyberlab/cyber-account';
 import { isValidAddress } from '@ethereumjs/util';
 import {
@@ -12,7 +13,7 @@ import {
     chains,
 } from '@particle-network/chains';
 import { useRequest } from 'ahooks';
-import { Button, Card, Input, InputNumber, Select, message } from 'antd';
+import { Button, Card, Input, InputNumber, Select, Switch, message, notification } from 'antd';
 import { ethers, parseUnits, toBigInt } from 'ethers';
 import { useEffect, useMemo, useState } from 'react';
 import './App.scss';
@@ -31,47 +32,57 @@ function App() {
 
     const [balance, setBalance] = useState('0');
     const [accountDeployed, setAccountDeployed] = useState(false);
+    const [usePaymaster, setUsePaymaster] = useState(true);
+
+    const cyberBundler = useMemo(
+        () =>
+            new CyberBundler({
+                rpcUrl: 'https://api.stg.cyberconnect.dev/cyberaccount/bundler/v1/rpc',
+                appId: '87fffd6e-3b60-45ea-8562-2c05151d3404',
+            }),
+        []
+    );
+
+    const cyberPaymaster = useMemo(
+        () =>
+            new CyberPaymaster({
+                rpcUrl: 'https://api.stg.cyberconnect.dev/cyberaccount/paymaster/v1/rpc',
+                appId: '87fffd6e-3b60-45ea-8562-2c05151d3404',
+                generateJwt: async (cyberAccountAddress) => generateJwt(cyberAccountAddress),
+            }),
+        []
+    );
 
     const cyberAccount = useMemo(() => {
         if (!particle || !provider || !connected) {
             return;
         }
-        const cyberBundler = new CyberBundler({
-            rpcUrl: 'https://api.stg.cyberconnect.dev/cyberaccount/bundler/v1/rpc',
-            appId: '87fffd6e-3b60-45ea-8562-2c05151d3404',
-        });
         const ownerAddress = particle.auth.getWallet()?.public_address;
         const sign = async (message: string): Promise<any> => {
             return await particle.evm.personalSign(message);
         };
 
-        // Optional: Paymaster
-        const cyberPaymaster = new CyberPaymaster({
-            rpcUrl: 'https://api.stg.cyberconnect.dev/cyberaccount/paymaster/v1/rpc',
-            appId: '87fffd6e-3b60-45ea-8562-2c05151d3404',
-            generateJwt: async (cyberAccountAddress) => generateJwt(cyberAccountAddress),
-        });
-
         const cyberAccount = new CyberAccount({
             chain: {
                 id: currentChain.id,
                 testnet: currentChain.network !== 'Mainnet',
+                rpcUrl: currentChain.rpcUrl,
             },
             owner: {
                 address: ownerAddress as any,
                 signMessage: sign,
             },
             bundler: cyberBundler,
-            paymaster: cyberPaymaster,
+            paymaster: usePaymaster ? cyberPaymaster : undefined,
         });
         return cyberAccount;
-    }, [particle, provider, connected, currentChain]);
+    }, [particle, provider, connected, currentChain, cyberBundler, cyberPaymaster, usePaymaster]);
 
     const onSendValueChange = (value: number | null) => {
         setSendValue(Number(value));
     };
 
-    const sendNativeToken = () => {
+    const sendNativeToken = async () => {
         if (sendValue <= 0 || !cyberAccount || !receiverAddress) {
             return Promise.reject('Invalid params');
         }
@@ -79,17 +90,39 @@ function App() {
             return Promise.reject('Invalid receiver address');
         }
 
-        return cyberAccount!.sendTransaction({
+        const hash = await cyberAccount!.sendTransaction({
             to: receiverAddress as any,
             value: parseUnits(sendValue.toString(), 18) as any,
             data: '0x',
         });
+
+        let txHash;
+        while (!txHash) {
+            // delay 3000
+            await new Promise((resolve) => setTimeout(resolve, 1000));
+            const result = await cyberBundler.getUserOperationByHash(hash!);
+            if (result) {
+                txHash = result.transactionHash;
+            }
+        }
+        return txHash;
     };
 
     const { run: runSendNativeToken, loading: sendNativeTokenLoading } = useRequest(sendNativeToken, {
         manual: true,
         onSuccess: (hash) => {
-            console.log('sendNativeToken', hash);
+            console.log('sendNativeToken, transactionHash', hash);
+            notification.success({
+                message: 'Send Native Token Success',
+                description: hash,
+                onClick: () => {
+                    window.open(`${currentChain.blockExplorerUrl}/tx/${hash}`, '_blank');
+                },
+            });
+            if (cyberAccount) {
+                runGetBalance(cyberAccount.address);
+                setAccountDeployed(true);
+            }
         },
         onError: (e) => {
             console.error('sendNativeToken', e);
@@ -97,7 +130,7 @@ function App() {
         },
     });
 
-    const sendERC20Token = () => {
+    const sendERC20Token = async () => {
         if (sendERC20Value <= 0 || !cyberAccount || !receiverERC20Address || !erc20ContractAddress) {
             return Promise.reject('Invalid params');
         }
@@ -114,17 +147,41 @@ function App() {
             receiverERC20Address,
             ethers.parseEther(sendERC20Value.toString()).toString(),
         ]);
-        return cyberAccount!.sendTransaction({
+        const hash = await cyberAccount!.sendTransaction({
             to: erc20ContractAddress as any,
             data: data as any,
             value: toBigInt(0),
         });
+
+        let txHash;
+        while (!txHash) {
+            // delay 3000
+            await new Promise((resolve) => setTimeout(resolve, 1000));
+            const result = await cyberBundler.getUserOperationByHash(hash!);
+            if (result) {
+                txHash = result.transactionHash;
+            }
+        }
+        return txHash;
     };
 
     const { run: runSendERC20Token, loading: sendERC20TokenLoading } = useRequest(sendERC20Token, {
         manual: true,
         onSuccess: (hash) => {
-            console.log('sendERC20Token', hash);
+            console.log('sendERC20Token, transactionHash', hash);
+            if (hash) {
+                notification.success({
+                    message: 'Send ERC20 Token Success',
+                    description: hash,
+                    onClick: () => {
+                        window.open(`${currentChain.blockExplorerUrl}/tx/${hash}`, '_blank');
+                    },
+                });
+            }
+            if (cyberAccount) {
+                runGetBalance(cyberAccount.address);
+                setAccountDeployed(true);
+            }
         },
         onError: (e) => {
             console.error('sendERC20Token', e);
@@ -140,31 +197,53 @@ function App() {
         }
     };
 
+    const getBalance = async (address: string) => {
+        if (provider) {
+            return provider.getBalance(address);
+        }
+    };
+
+    const { run: runGetBalance, loading: getBalanceLoading } = useRequest(getBalance, {
+        onSuccess: (result) => {
+            if (result !== undefined) {
+                setBalance(ethers.formatEther(result));
+            }
+        },
+        onError: (e) => {
+            console.error('getBalance', e);
+        },
+    });
+
     useEffect(() => {
         if (provider && cyberAccount) {
-            provider
-                .getBalance(cyberAccount.address)
-                .then((result) => {
-                    setBalance(ethers.formatEther(result));
-                })
-                .catch((e) => console.error('getBalance', e));
+            runGetBalance(cyberAccount.address);
         }
     }, [provider, cyberAccount]);
 
+    const getAccountDeployed = async () => {
+        if (cyberAccount) {
+            return cyberAccount.isAccountDeployed();
+        }
+    };
+
+    const { run: runGetAccountDeployed, loading: getAccountDeployedLoading } = useRequest(getAccountDeployed, {
+        onSuccess: (result) => {
+            setAccountDeployed(result ?? false);
+        },
+        onError: (e) => {
+            console.error('isAccountDeployed', e);
+        },
+    });
+
     useEffect(() => {
         if (cyberAccount) {
-            cyberAccount
-                .isAccountDeployed()
-                .then((result) => {
-                    setAccountDeployed(result);
-                })
-                .catch((e) => console.error('isAccountDeployed', e));
+            runGetAccountDeployed();
         }
     }, [cyberAccount]);
 
     return (
         <div className="app">
-            <div className="title">Particle ❤️ Cyber</div>
+            <div className="title">Particle ❤️ Cyber Connect</div>
             <div className="top-menu">
                 <Select
                     className="connect-chain"
@@ -207,9 +286,31 @@ function App() {
             {cyberAccount && (
                 <>
                     <Card title="Wallet Info" className="card">
-                        <div>{`Smart Account: ${cyberAccount.address}`}</div>
-                        <div>{`Balance: ${balance}`}</div>
-                        <div>{`Account Deployed: ${accountDeployed}`}</div>
+                        <div>{`Cyber Account: ${cyberAccount.address}`}</div>
+                        <div>
+                            {`Balance: ${balance}`}
+                            <RedoOutlined
+                                style={{ color: '#1677ff', marginLeft: 10, fontSize: 15 }}
+                                spin={getBalanceLoading}
+                                onClick={() => runGetBalance(cyberAccount.address)}
+                            />
+                        </div>
+                        <div>
+                            {`Account Deployed: ${accountDeployed}`}
+                            <RedoOutlined
+                                style={{ color: '#1677ff', marginLeft: 10, fontSize: 15 }}
+                                spin={getAccountDeployedLoading}
+                                onClick={runGetAccountDeployed}
+                            />
+                        </div>
+                        <div>
+                            Use Paymaster:
+                            <Switch
+                                style={{ position: 'absolute', right: 24 }}
+                                checked={usePaymaster}
+                                onChange={(checked) => setUsePaymaster(checked)}
+                            ></Switch>
+                        </div>
                     </Card>
 
                     <Card title="Send Native Token" className="card">

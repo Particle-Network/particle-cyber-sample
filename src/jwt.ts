@@ -32,9 +32,9 @@ const generateJwt = (address: string) => {
     const token = jwt.sign(
         {
             iss: 'CyberConnect',
-            exp: Math.floor(new Date(Date.now() + 1000 * 3600 * 24 * 365).getTime() / 1000),
+            exp: Math.floor((Date.now() + 1000 * 3600 * 24 * 365) / 1000),
             iat: Math.floor(Date.now() / 1000),
-            api_id: '87fffd6e-3b60-45ea-8562-2c05151d3404',
+            aid: '87fffd6e-3b60-45ea-8562-2c05151d3404',
             sender: address,
         },
         privateKey,

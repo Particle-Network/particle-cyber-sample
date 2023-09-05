@@ -1,5 +1,15 @@
 import { ParticleNetwork, type LoginOptions } from '@particle-network/auth';
-import { OptimismGoerli, type ChainInfo } from '@particle-network/chains';
+import {
+    Base,
+    BaseGoerli,
+    Linea,
+    LineaGoerli,
+    Optimism,
+    OptimismGoerli,
+    Polygon,
+    PolygonMumbai,
+    type ChainInfo,
+} from '@particle-network/chains';
 import { ParticleProvider } from '@particle-network/provider';
 import { ethers } from 'ethers';
 import { useCallback, useEffect, useMemo, useState } from 'react';
@@ -32,6 +42,20 @@ const useParticle = () => {
             appId: '64f36641-b68c-4b19-aa10-5c5304d0eab3',
             chainName: OptimismGoerli.name,
             chainId: OptimismGoerli.id,
+            wallet: {
+                customStyle: {
+                    supportChains: [
+                        Optimism,
+                        OptimismGoerli,
+                        Polygon,
+                        PolygonMumbai,
+                        Base,
+                        BaseGoerli,
+                        Linea,
+                        LineaGoerli,
+                    ],
+                },
+            },
         });
         particle.setLanguage('en-US');
         setParticle(particle);
